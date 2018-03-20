@@ -16,9 +16,22 @@ import argparse
 import pdb
 
 
+class LockedDropout(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, dropout=0.5):
+        if not self.training or not dropout:
+            return x
+        m = x.data.new(1, x.size(1), x.size(2)).bernoulli_(1 - dropout)
+        mask = Variable(m, requires_grad=False) / (1 - dropout)
+        mask = mask.expand_as(x)
+        return mask * x
+
 class TextNet(nn.Module):
     def __init__(self, dictionary_size, embedding_dim, hidden_dim):
         super(TextNet, self).__init__()
+        self.lockdrop = LockedDropout()
         self.embedding = nn.Embedding(num_embeddings=dictionary_size, embedding_dim=embedding_dim)
         self.rnns = nn.ModuleList([
             nn.LSTM(input_size=embedding_dim, hidden_size=hidden_dim),
@@ -29,6 +42,7 @@ class TextNet(nn.Module):
     def forward(self, input_, forward=0, stochastic=False):
         h = input_
         h = self.embedding(h)
+        #h = self.lockdrop(h, 0.5)
         states = []
         for rnn in self.rnns:
             h, state = rnn(h)
@@ -80,7 +94,6 @@ def init_xavier(m):
         std = np.sqrt(6.0 / (fan_in + fan_out))
         m.weight.data.normal_(0,std)
 
-
 class WT2DataLoader(DataLoader):
     def __init__(self, dataset, batch_size, base_sequence_length):
         self.dataset = dataset
@@ -99,8 +112,8 @@ class WT2DataLoader(DataLoader):
         # Reshape data into batches
         data = torch.LongTensor(data.tolist())
         data = data.view(self.batch_size, words_per_batch).t().contiguous()
-        if torch.cuda.is_available():
-            data.cuda()
+        #if torch.cuda.is_available():
+        #    data.cuda()
 
         pos = 0
         while True:
@@ -118,10 +131,10 @@ class WT2DataLoader(DataLoader):
         #get sequence of random length from each batch
         if np.random.binomial(1, 0.95):
             seq = self.base_sequence_length
-            sequence_length = np.clip(int(np.random.normal(seq, 5)), seq-15, seq+15)
+            sequence_length = np.clip(int(np.random.normal(seq, 5)), seq-10, seq+10)
         else:
             seq = self.base_sequence_length//2
-            sequence_length = np.clip(int(np.random.normal(seq, 5)), seq-15, seq+15)
+            sequence_length = np.clip(int(np.random.normal(seq, 5)), seq-10, seq+10)
 
         return sequence_length
 
@@ -216,6 +229,7 @@ class Trainer():
             epoch_loss = 0
             running_loss = 0
             correct = 0
+            model_file = "./hw3_part1_adam.pt"
             for batch_idx, (inputs_, targets) in enumerate(train_loader):
                 #print((inputs_[1:]==targets[:-1]).all())
                 #assert((inputs_[1:]==targets[:-1]).all())
@@ -246,11 +260,21 @@ class Trainer():
                 num_batches = batch_idx
                 epoch_loss += loss.data[0]
                 pred = out.data.max(2, keepdim=True)[1]
-                if (batch_idx % 50) == 0:
+                if (batch_idx % 100) == 0:
                     val_error, val_loss = test_dataset(self.model, self.criterion, val_loader)
                     print("batch_idx: {}, train_loss: {}, val_loss: {}, val_error: {}".format(batch_idx, loss.data[0], val_loss, val_error),  flush=True)
                     print(loss.data[0], flush=True)
                     print([vocab[word_id] for word_id in pred[:,0,0]])
+
+                    #Save model if better
+                    if val_loss < best_val_loss:
+                        try:
+                            os.remove(model_file)
+                        except:
+                            pass
+                        print("saving new best model: %s" % model_file, flush=True)
+                        self.save_model(model_file)
+                        best_val_loss = val_loss
 
             #Report metrics for training and validation every epoch, save model if it's better than our last one.
             train_loss = epoch_loss/num_batches
@@ -259,7 +283,6 @@ class Trainer():
            
             #Save model if better
             if val_loss < best_val_loss:
-                model_file = "./hw3_part1.pt"
                 try:
                     os.remove(model_file)
                 except:
@@ -288,22 +311,40 @@ if __name__ == "__main__":
     dictionary_size = len(vocab)
     batch_size = 80
 
-    # Dataloaders
+    #Dataloaders
 #    if torch.cuda.is_available():
 #        train_loader = WT2DataLoader(train_data, batch_size=batch_size, pin_memory=True)
 #        val_loader = WT2DataLoader(val_data, batch_size=batch_size, pin_memory=True)
     train_loader = WT2DataLoader(train_data, batch_size, args.base_sequence_length)
     val_loader = WT2DataLoader(val_data, batch_size, args.base_sequence_length)
 
+    #Initialize with unigram distribution trick
+    flat_train_data = np.concatenate(train_data)
+    unique, counts = np.unique(flat_train_data, return_counts=True)
+    unigram_dist = counts/len(flat_train_data)
+
+    def init_unigram(m):
+        #Calculate unigram distribution
+        
+        #Smooth
+
+        #Set bias of projection layer to smoothed unigram distribution
+        smoothing = 0.1
+        vocabsize = len(vocab)
+        if type(m) == nn.Linear:
+            m.bias.data = torch.Tensor(np.log((unigram_dist*(1.-smoothing))+(smoothing/vocabsize)).tolist())
+
     #Initialize the network
     net = TextNet(dictionary_size, args.embedding_dim, args.hidden_dim)
+    net.apply(init_unigram)
     if torch.cuda.is_available():
         net.cuda()
 
     #Train the model
     n_epochs = 50
     #optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    optimizer = torch.optim.SGD(net.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = torch.optim.Adam(net.parameters())
+    #optimizer = torch.optim.SGD(net.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     my_trainer = Trainer(net, optimizer, train_loader=train_loader, val_loader=val_loader)
     my_trainer.run(n_epochs)
     np.save('my_metrics', np.asarray(my_trainer.metrics))

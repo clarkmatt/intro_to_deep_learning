@@ -15,7 +15,7 @@ def prediction(inp):
     :param inp: array of words (batch size, sequence length) [0-labels]
     :return: array of scores for the next word in each sequence (batch size, labels)
     """
-    inp = Variable(torch.LongTensor(inp))
+    inp = Variable(torch.LongTensor(inp.tolist()))
     out = model(inp, forward=0, stochastic=False)
     scores = out[:, -1, :].data.numpy()
 
