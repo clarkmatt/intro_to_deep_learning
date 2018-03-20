@@ -15,6 +15,7 @@ from collections import namedtuple
 import argparse
 import pdb
 
+gpu_dev = 1
 
 class LockedDropout(nn.Module):
     def __init__(self):
@@ -151,8 +152,8 @@ def test_dataset(model, criterion, loader):
         X = Variable(inputs_)
         Y = Variable(targets)
         if torch.cuda.is_available():
-            X = X.cuda()
-            Y = Y.cuda()
+            X = X.cuda(gpu_dev)
+            Y = Y.cuda(gpu_dev)
 
         out = model(X, forward=0, stochastic=True)
 
@@ -241,8 +242,8 @@ class Trainer():
                 X = Variable(inputs_)
                 Y = Variable(targets)
                 if torch.cuda.is_available():
-                    X = X.cuda()
-                    Y = Y.cuda()
+                    X = X.cuda(gpu_dev)
+                    Y = Y.cuda(gpu_dev)
                 
                 out = self.model(X, forward=0, stochastic=False)
 
@@ -338,7 +339,7 @@ if __name__ == "__main__":
     net = TextNet(dictionary_size, args.embedding_dim, args.hidden_dim)
     net.apply(init_unigram)
     if torch.cuda.is_available():
-        net.cuda()
+        net.cuda(gpu_dev)
 
     #Train the model
     n_epochs = 50
