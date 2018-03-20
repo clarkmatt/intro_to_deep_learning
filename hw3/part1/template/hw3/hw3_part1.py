@@ -43,11 +43,13 @@ class TextNet(nn.Module):
     def forward(self, input_, forward=0, stochastic=False):
         h = input_
         h = self.embedding(h)
-        #h = self.lockdrop(h, 0.5)
+        h = self.lockdrop(h, 0.5)
         states = []
-        for rnn in self.rnns:
+        for l, rnn in enumerate(self.rnns):
             h, state = rnn(h)
             states.append(state)
+            if l < len(self.rnns):
+                h = self.lockdrop(h, 0.5)
         h = self.projection(h)
         if stochastic:
             gumbel = Variable(sample_gumbel(shape=h.size(), out=h.data.new()))
