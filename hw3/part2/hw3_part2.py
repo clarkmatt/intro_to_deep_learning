@@ -68,16 +68,17 @@ class WSJNet(nn.Module):
         self.projection = nn.Linear(in_features=hidden_dim, out_features=46)
 
     def forward(self, input_, forward=0, stochastic=False):
-        h = input_
+        x = input_
         states = []
         for rnn in self.rnns:
-            h, state = rnn(h)
+            x, state = rnn(x)
             states.append(state)
-        h = self.projection(h)
-        if stochastic:
-            gumbel = Variable(sample_gumbel(shape=h.size(), out=h.data.new()))
-            h += gumbel
-        logits = h
+        pdb.set_trace()
+        x = self.projection(x)
+        #if stochastic:
+        #    gumbel = Variable(sample_gumbel(shape=x.size(), out=h.data.new()))
+        #    x += gumbel
+        logits = x
         return logits 
 
 if __name__=="__main__":
@@ -96,7 +97,7 @@ if __name__=="__main__":
     val_phonemes = np.load("dev_phonemes.npy")
 
     ## Initialize DataLoaders
-    batch_size = 32
+    batch_size = 16
     #train_loader = WSJDataLoader(train_data, train_phonemes, batch_size=batch_size)
     val_loader = WSJDataLoader(val_data, val_phonemes, batch_size=batch_size)
 
@@ -108,19 +109,17 @@ if __name__=="__main__":
     optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     ciriterion = CTCLoss()
 
-    n_epochs = 50
+    n_epochs = 30
     for e in range(n_epochs):
         for idx, (data, phonemes, num_phonemes) in enumerate(val_loader):
             #print("idx: ", idx, "data_shape: ", data.data.shape, "phonemes_shape: ", phonemes.shape, "num_phonemes: ", num_phonemes)
             model.train()
             optimizer.zero_grad()
            
-            pdb.set_trace()
             #Put on gpu if available
             if torch.cuda.is_available():
                 data = data.cuda()
 
-            pdb.set_trace()
             out = model(data)
 
             #Get our loss and calculate the gradients
@@ -128,3 +127,7 @@ if __name__=="__main__":
             loss.backward()
             torch.nn.utils.clip_grad_norm(self.model.parameters(), 0.25)
             self.optimizer.step()
+
+#IMPLEMENTATION NOTES:
+#Add +1 to phonemes
+#Make sure output dim is 47
