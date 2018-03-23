@@ -4,14 +4,6 @@ from hw3.hw3_part1 import TextNet
 import os
 import pdb
 
-gpu_dev = 0
-
-model = TextNet(dictionary_size=33278, embedding_dim=400, hidden_dim=1150)
-model_file = os.path.abspath(os.path.join(__file__, "../hw3_part1_1.pt"))
-model.load_state_dict(torch.load(model_file, map_location=lambda storage, loc: storage))
-#model.load_state_dict(torch.load("hw3_part1_adam.pt"))
-model.eval()
-#model.cuda(gpu_dev)
 
 def generation(inp, forward):
     """
@@ -21,6 +13,18 @@ def generation(inp, forward):
     :param forward: number of additional words to generate
     :return: generated words (batch size, forward)
     """
+
+    # load model
+    model = TextNet(dictionary_size=33278, embedding_dim=400, hidden_dim=1150)
+    model_file = os.path.abspath(os.path.join(__file__, "../hw3_part1_1.pt"))
+    model.load_state_dict(
+        torch.load(
+            model_file,
+            map_location=lambda storage,
+            loc: storage))
+    model.eval()
+
+    # generate sequence
     inp = Variable(torch.LongTensor(inp.tolist()))
     out = model.forward(inp.t(), forward=forward, stochastic=True)
     out = torch.max(out, dim=2)[1]
