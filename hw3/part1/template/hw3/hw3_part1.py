@@ -8,7 +8,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.utils.data import Dataset, DataLoader
-import matplotlib.pyplot as plt
 import numpy as np
 import os
 from collections import namedtuple
@@ -17,22 +16,37 @@ import pdb
 
 gpu_dev = 1
 
-class LockedDropout(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x, dropout=0.5):
-        if not self.training or not dropout:
-            return x
-        m = x.data.new(1, x.size(1), x.size(2)).bernoulli_(1 - dropout)
-        mask = Variable(m, requires_grad=False) / (1 - dropout)
-        mask = mask.expand_as(x)
-        return mask * x
+#class LockedDropout(nn.Module):
+#    def __init__(self):
+#        super().__init__()
+#
+#    def forward(self, x, dropout=0.5):
+#        if not self.training or not dropout:
+#            return x
+#        m = x.data.new(1, x.size(1), x.size(2)).bernoulli_(1 - dropout)
+#        mask = Variable(m, requires_grad=False) / (1 - dropout)
+#        mask = mask.expand_as(x)
+#        return mask * x
+#class LockedDropout(nn.Module):
+#    def __init__(self):
+#        super().__init__()
+#
+#    def forward(self, x, dropout=0.5):
+#        if self.training and dropout:
+#            drop_mask = torch.bernoulli(torch.ones(1, x.size(1), x.size(2))*(1-dropout))
+#            drop_mask = Variable(drop_mask, requires_grad=False)
+#            if torch.cuda.is_available():
+#                drop_mask = drop_mask.cuda(gpu_dev)
+#            drop_mask = drop_mask.expand_as(x)
+#            masked = drop_mask * x
+#            return masked
+#        else:
+#            return x
 
 class TextNet(nn.Module):
     def __init__(self, dictionary_size, embedding_dim, hidden_dim):
         super(TextNet, self).__init__()
-        self.lockdrop = LockedDropout()
+        #self.locked_drop = LockedDropout()
         self.embedding = nn.Embedding(num_embeddings=dictionary_size, embedding_dim=embedding_dim)
         self.rnns = nn.ModuleList([
             nn.LSTM(input_size=embedding_dim, hidden_size=hidden_dim),
@@ -43,13 +57,12 @@ class TextNet(nn.Module):
     def forward(self, input_, forward=0, stochastic=False):
         h = input_
         h = self.embedding(h)
-        h = self.lockdrop(h, 0.5)
         states = []
         for l, rnn in enumerate(self.rnns):
             h, state = rnn(h)
             states.append(state)
-            if l < len(self.rnns):
-                h = self.lockdrop(h, 0.5)
+            #if l < len(self.rnns):
+            	#h = self.locked_drop(h, 0.5)
         h = self.projection(h)
         if stochastic:
             gumbel = Variable(sample_gumbel(shape=h.size(), out=h.data.new()))
@@ -57,11 +70,12 @@ class TextNet(nn.Module):
         logits = h
         if forward > 0:
             outputs = []
-            h = torch.max(logits[:, -1:, :], dim=2)[1]
+            #h = torch.max(logits[:, -1:, :], dim=2)[1]
+            h = torch.max(logits[-1:, :, :], dim=2)[1]
             for i in range(forward):
                 h = self.embedding(h)
                 for j, rnn in enumerate(self.rnns):
-                    h, state = rnn(x, states[j])
+                    h, state = rnn(h, states[j])
                     states[j] = state
                 h = self.projection(h)
                 if stochastic:
@@ -69,7 +83,8 @@ class TextNet(nn.Module):
                     h += gumbel
                 outputs.append(h)
                 h = torch.max(h, dim=2)[1]
-            logits = torch.cat([logits] + outputs, dim=1)
+            #logits = torch.cat([logits] + outputs, dim=1)
+            logits = torch.cat(outputs)
         return logits 
 
 def sample_gumbel(shape, eps=1e-10, out=None):
@@ -157,7 +172,7 @@ def test_dataset(model, criterion, loader):
             X = X.cuda(gpu_dev)
             Y = Y.cuda(gpu_dev)
 
-        out = model(X, forward=0, stochastic=True)
+        out = model(X, forward=0, stochastic=False)
 
         #Get our predictions
         pred = out.data.max(2, keepdim=True)[1]
@@ -175,25 +190,6 @@ def test_dataset(model, criterion, loader):
 
     return 1-(correct/num_samples), total_loss/num_batches
 
-def generate_test_results_csv(model, loader, n_members):
-    predictions = torch.zeros(n_members)
-    n_processed = 0
-    model.eval()
-
-    with open("my_submission.csv", 'w') as csv_file:
-        csv_file.write("id,label\n")
-        for data in loader:
-            X = Variable(data.view(-1, int((2*k+1)*frame_size)))
-            out = model(X)
-            pred = out.data.max(1, keepdim=True)[1]
-            n_end = n_processed + out.data.shape[0]
-            predictions[n_processed:n_end] = pred
-            n_processed = n_end
-
-        # Write csv file
-        [csv_file.write("%s,%s\n") % (i, label) for i, label in enumerate(predictions)]
-
-    return predictions
 
 # setup metric class
 Metric = namedtuple('Metric', ['loss', 'train_error', 'val_loss', 'val_error'])
@@ -232,7 +228,7 @@ class Trainer():
             epoch_loss = 0
             running_loss = 0
             correct = 0
-            model_file = "./hw3_part1_adam.pt"
+            model_file = "./hw3_part1_1.pt"
             for batch_idx, (inputs_, targets) in enumerate(train_loader):
                 #print((inputs_[1:]==targets[:-1]).all())
                 #assert((inputs_[1:]==targets[:-1]).all())
@@ -266,7 +262,6 @@ class Trainer():
                 if (batch_idx % 100) == 0:
                     val_error, val_loss = test_dataset(self.model, self.criterion, val_loader)
                     print("batch_idx: {}, train_loss: {}, val_loss: {}, val_error: {}".format(batch_idx, loss.data[0], val_loss, val_error),  flush=True)
-                    print(loss.data[0], flush=True)
                     print([vocab[word_id] for word_id in pred[:,0,0]])
 
                     #Save model if better
@@ -346,8 +341,8 @@ if __name__ == "__main__":
     #Train the model
     n_epochs = 50
     #optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    optimizer = torch.optim.Adam(net.parameters())
-    #optimizer = torch.optim.SGD(net.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    #optimizer = torch.optim.Adam(net.parameters())
+    optimizer = torch.optim.SGD(net.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     my_trainer = Trainer(net, optimizer, train_loader=train_loader, val_loader=val_loader)
     my_trainer.run(n_epochs)
     np.save('my_metrics', np.asarray(my_trainer.metrics))

@@ -2,6 +2,7 @@ import torch
 from torch.autograd import Variable
 from hw3.hw3_part1 import TextNet
 import os
+import pdb
 
 gpu_dev = 0
 
@@ -12,16 +13,16 @@ model.load_state_dict(torch.load(model_file, map_location=lambda storage, loc: s
 model.eval()
 #model.cuda(gpu_dev)
 
-def prediction(inp):
+def generation(inp, forward):
     """
-    Input is a text sequences. Produce scores for the next word in the sequence.
-    Scores should be raw logits not post-softmax activations.
-    Load your model before generating predictions.
-    :param inp: array of words (batch size, sequence length) [0-labels]
-    :return: array of scores for the next word in each sequence (batch size, labels)
+    Generate a sequence of words given a starting sequence.
+    Load your model before generating words.
+    :param inp: Initial sequence of words (batch size, length)
+    :param forward: number of additional words to generate
+    :return: generated words (batch size, forward)
     """
     inp = Variable(torch.LongTensor(inp.tolist()))
-    out = model(inp.t(), forward=0, stochastic=False)
-    scores = out[-1].data.numpy()
+    out = model.forward(inp.t(), forward=forward, stochastic=True)
+    out = torch.max(out, dim=2)[1]
 
-    return scores
+    return out.data.numpy().T
