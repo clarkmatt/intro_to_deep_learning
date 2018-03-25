@@ -9,6 +9,8 @@ import numpy as np
 import argparse
 import pdb
 
+gpu_dev =0
+
 class WSJDataLoader(DataLoader):
     def __init__(self, dataset, phonemes, batch_size):
         self.dataset = dataset
@@ -52,6 +54,8 @@ class WSJDataLoader(DataLoader):
             num_phonemes = np.asarray([labels.shape[0] for labels in sorted_phoneme_batch])
 
             seq_tensor = Variable(seq_tensor)
+            if torch.cuda.is_available():
+                seq_tensor = seq_tensor.cuda()
             packed_data = pack_padded_sequence(seq_tensor, sorted_seq_lengths)
 
             # do the phonemes need to be a Tensor or Variable?
@@ -92,47 +96,58 @@ if __name__=="__main__":
     print(args, flush=True)
 
     ## Load data
-    #train_data = np.load("train.npy")
-    #train_phonemes = np.load("train_phonemes.npy")+1
+    #root = '/home/matt/.kaggle/competitions/11785-hw3p2/'
+    root = ''
+    train_data = np.load("train.npy")
+    train_phonemes = np.load(root+"train_phonemes.npy")+1
     val_data = np.load("dev.npy")
-    val_phonemes = np.load("dev_phonemes.npy")+1
+    val_phonemes = np.load(root+"dev_phonemes.npy")+1
 
     ## Initialize DataLoaders
     batch_size = 16
-    #train_loader = WSJDataLoader(train_data, train_phonemes, batch_size=batch_size)
+    train_loader = WSJDataLoader(train_data, train_phonemes, batch_size=batch_size)
     val_loader = WSJDataLoader(val_data, val_phonemes, batch_size=batch_size)
 
     ## Initialize network
     model = WSJNet(args.hidden_dim)
     if torch.cuda.is_available():
-        model.cuda()
+        model.cuda(gpu_dev)
 
     #optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     optimizer = torch.optim.Adam(model.parameters())
     criterion = CTCLoss()
 
+    running_loss = 0.0
     n_epochs = 30
     for e in range(n_epochs):
-        for idx, (data, phonemes, num_phonemes) in enumerate(val_loader):
+        for idx, (data, phonemes, num_phonemes) in enumerate(train_loader):
             #print("idx: ", idx, "data_shape: ", data.data.shape, "phonemes_shape: ", phonemes.shape, "num_phonemes: ", num_phonemes)
             model.train()
             optimizer.zero_grad()
            
             #Put on gpu if available
+            phonemes = Variable(torch.IntTensor(phonemes))
+            num_phonemes = Variable(torch.IntTensor(num_phonemes))
             if torch.cuda.is_available():
-                data = data.cuda()
+                phonemes = phonemes.cuda(gpu_dev)
+                num_phonemes = num_phonemes.cuda(gpu_dev)
 
             out, seq_lengths = model(data)
 
-            #Get our loss and calculate the gradients
-            phonemes = Variable(torch.IntTensor(phonemes))
             seq_lengths = Variable(torch.IntTensor(seq_lengths))
-            num_phonemes = Variable(torch.IntTensor(num_phonemes))
-            loss = criterion(out, phonemes, seq_lengths, num_phonemes)
-            print(loss.data[0])
+            if torch.cuda.is_available():
+                seq_lengths = seq_lengths.cuda(gpu_dev)
+
+            #Get our loss and calculate the gradients
+            loss = criterion(out, phonemes.cpu(), seq_lengths.cpu(), num_phonemes.cpu())
+            running_loss += loss.data[0]
+            if idx % 100 == 0:
+                print("iteration: {}, loss: {}".format(idx, loss.data[0]))
             loss.backward()
             #torch.nn.utils.clip_grad_norm(model.parameters(), 0.25)
             optimizer.step()
+
+        print("epoch: {}, training_loss: {}".format(e, running_loss/idx))
 
 #IMPLEMENTATION NOTES:
 #Add +1 to phonemes
