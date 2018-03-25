@@ -52,10 +52,10 @@ class WSJDataLoader(DataLoader):
             num_phonemes = np.asarray([labels.shape[0] for labels in sorted_phoneme_batch])
 
             seq_tensor = Variable(seq_tensor)
-            packed_data = pack_padded_sequence(seq_tensor, sorted_seq_lengths, batch_first=False)
+            packed_data = pack_padded_sequence(seq_tensor, sorted_seq_lengths)
 
             # do the phonemes need to be a Tensor or Variable?
-            yield packed_data, np.concatenate(sorted_phoneme_batch), num_phonemes
+            yield packed_data, torch.IntTensor(np.concatenate(sorted_phoneme_batch)), num_phonemes
 
 
 class WSJNet(nn.Module):
@@ -65,7 +65,7 @@ class WSJNet(nn.Module):
             nn.LSTM(input_size=40, hidden_size=hidden_dim),
             nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim),
             nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim)])
-        self.projection = nn.Linear(in_features=hidden_dim, out_features=46)
+        self.projection = nn.Linear(in_features=hidden_dim, out_features=47)
 
     def forward(self, input_, forward=0, stochastic=False):
         x = input_
@@ -73,28 +73,29 @@ class WSJNet(nn.Module):
         for rnn in self.rnns:
             x, state = rnn(x)
             states.append(state)
-        pdb.set_trace()
-        x = self.projection(x)
+
+        output, lengths  = pad_packed_sequence(x)
+        x = self.projection(output)
         #if stochastic:
         #    gumbel = Variable(sample_gumbel(shape=x.size(), out=h.data.new()))
         #    x += gumbel
         logits = x
-        return logits 
+        return logits, lengths 
 
 if __name__=="__main__":
     #Parse input args
     parser = argparse.ArgumentParser(description='Get Network Hyperparameters.')
-    parser.add_argument('--hidden_dim', dest='hidden_dim', type=int, default=1150)
-    parser.add_argument('--learning_rate', dest='learning_rate', type=float, default=30.0)
-    parser.add_argument('--weight_decay', dest='weight_decay', type=float, default=1e-6)
+    parser.add_argument('--hidden_dim', dest='hidden_dim', type=int, default=256)
+    #parser.add_argument('--learning_rate', dest='learning_rate', type=float, default=30.0)
+    #parser.add_argument('--weight_decay', dest='weight_decay', type=float, default=1e-6)
     args = parser.parse_args()
     print(args, flush=True)
 
     ## Load data
     #train_data = np.load("train.npy")
-    #train_phonemes = np.load("train_phonemes.npy")
+    #train_phonemes = np.load("train_phonemes.npy")+1
     val_data = np.load("dev.npy")
-    val_phonemes = np.load("dev_phonemes.npy")
+    val_phonemes = np.load("dev_phonemes.npy")+1
 
     ## Initialize DataLoaders
     batch_size = 16
@@ -106,8 +107,9 @@ if __name__=="__main__":
     if torch.cuda.is_available():
         model.cuda()
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    ciriterion = CTCLoss()
+    #optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = torch.optim.Adam(model.parameters())
+    criterion = CTCLoss()
 
     n_epochs = 30
     for e in range(n_epochs):
@@ -120,13 +122,17 @@ if __name__=="__main__":
             if torch.cuda.is_available():
                 data = data.cuda()
 
-            out = model(data)
+            out, seq_lengths = model(data)
 
             #Get our loss and calculate the gradients
-            loss = criterion(out, Y)
+            phonemes = Variable(torch.IntTensor(phonemes))
+            seq_lengths = Variable(torch.IntTensor(seq_lengths))
+            num_phonemes = Variable(torch.IntTensor(num_phonemes))
+            loss = criterion(out, phonemes, seq_lengths, num_phonemes)
+            print(loss.data[0])
             loss.backward()
-            torch.nn.utils.clip_grad_norm(self.model.parameters(), 0.25)
-            self.optimizer.step()
+            #torch.nn.utils.clip_grad_norm(model.parameters(), 0.25)
+            optimizer.step()
 
 #IMPLEMENTATION NOTES:
 #Add +1 to phonemes
