@@ -86,6 +86,34 @@ class WSJNet(nn.Module):
         logits = x
         return logits, lengths 
 
+def test_dataset(dataloader, criterion):
+    total_loss = 0.0
+    correct = 0
+    for idx, (data, phonemes, num_phonemes) in enumerate(dataloader):
+        model.eval()
+       
+        #Put on gpu if available
+        phonemes = Variable(torch.IntTensor(phonemes))
+        num_phonemes = Variable(torch.IntTensor(num_phonemes))
+        if torch.cuda.is_available():
+            phonemes = phonemes.cuda(gpu_dev)
+            num_phonemes = num_phonemes.cuda(gpu_dev)
+
+        out, seq_lengths = model(data)
+
+        seq_lengths = Variable(torch.IntTensor(seq_lengths))
+        if torch.cuda.is_available():
+            seq_lengths = seq_lengths.cuda(gpu_dev)
+
+        #Get our loss and calculate the gradients
+        loss = criterion(out, phonemes.cpu(), seq_lengths.cpu(), num_phonemes.cpu())
+        total_loss += loss.data[0]
+
+    average_loss = total_loss/idx # average loss
+    error = 1-correct # total error
+
+    return average_loss, 1-error
+
 if __name__=="__main__":
     #Parse input args
     parser = argparse.ArgumentParser(description='Get Network Hyperparameters.')
@@ -114,7 +142,7 @@ if __name__=="__main__":
         model.cuda(gpu_dev)
 
     #optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    optimizer = torch.optim.Adam(model.parameters())
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
     criterion = CTCLoss()
 
     running_loss = 0.0
@@ -133,21 +161,24 @@ if __name__=="__main__":
                 num_phonemes = num_phonemes.cuda(gpu_dev)
 
             out, seq_lengths = model(data)
+            #pdb.set_trace()
 
             seq_lengths = Variable(torch.IntTensor(seq_lengths))
             if torch.cuda.is_available():
-                seq_lengths = seq_lengths.cuda(gpu_dev)
+                seq_lengths = seq_lengths.cuda(gpu_dev) 
 
             #Get our loss and calculate the gradients
             loss = criterion(out, phonemes.cpu(), seq_lengths.cpu(), num_phonemes.cpu())
             running_loss += loss.data[0]
-            if idx % 100 == 0:
+            if idx % 200 == 0:
                 print("iteration: {}, loss: {}".format(idx, loss.data[0]))
             loss.backward()
             #torch.nn.utils.clip_grad_norm(model.parameters(), 0.25)
             optimizer.step()
 
-        print("epoch: {}, training_loss: {}".format(e, running_loss/idx))
+        validation_loss, _ = test_dataset(val_loader, criterion)
+        print("epoch: {}, training_loss: {}, validation_loss: {}".format(e, running_loss/idx, validation_loss))
+        running_loss = 0.0
 
 #IMPLEMENTATION NOTES:
 #Add +1 to phonemes
