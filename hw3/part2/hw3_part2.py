@@ -3,8 +3,10 @@ from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 from warpctc_pytorch import CTCLoss
 from ctcdecode import CTCBeamDecoder
+import Levenshtein as L
 import numpy as np
 import argparse
 import pdb
@@ -142,14 +144,16 @@ if __name__=="__main__":
     decoder = CTCBeamDecoder(labels=label_map, blank_id=0)
 
     ## Initialize network
+    model_file = "my_model_decay.pt"
     model = WSJNet(args.hidden_dim)
     if torch.cuda.is_available():
         model.cuda(gpu_dev)
 
     #optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-6)
     criterion = CTCLoss()
 
+    best_val_loss = float('inf')
     running_loss = 0.0
     n_epochs = 30
     for e in range(n_epochs):
@@ -167,32 +171,51 @@ if __name__=="__main__":
 
             logits, seq_lengths = model(data)
 
-            # decode into predicted string
-            pdb.set_trace()
-            logits = torch.transpose(logits, 0, 1)
-            probs = F.softmax(logits, dim=2).data.cpu()
-            output, scores, timesteps, out_seq_len = decoder.decode(probs=probs, seq_lens=seq_lengths)
-            for i in range(output.size(0)):
-                chrs = "".join(label_map[o] for o in output[i, 0, :out_seq_len[i, 0]])
+
 
 
 
             seq_lengths = Variable(torch.IntTensor(seq_lengths))
-            if torch.cuda.is_available():
-                seq_lengths = seq_lengths.cuda(gpu_dev) 
+            #if torch.cuda.is_available():
+            #    seq_lengths = seq_lengths.cuda(gpu_dev) 
 
             #Get our loss and calculate the gradients
             loss = criterion(logits, phonemes.cpu(), seq_lengths.cpu(), num_phonemes.cpu())
             running_loss += loss.data[0]
             if idx % 200 == 0:
-                print("iteration: {}, loss: {}".format(idx, loss.data[0]))
+                # decode into predicted string
+                logits = torch.transpose(logits, 0, 1)
+                probs = F.softmax(logits, dim=2).data.cpu()
+                output, scores, timesteps, out_seq_len = decoder.decode(probs=probs, seq_lens=seq_lengths.data)
+                #for i in range(output.size(0)):
+                #    pred_string = "".join(label_map[o] for o in output[i, 0, :out_seq_len[i, 0]])
+                #    true_string = [label_map[j] for j in phonemes.data]
+                #    L.distance(pred_string, true_string)
+                pred_string = "".join(label_map[o] for o in output[0, 0, :out_seq_len[0, 0]])
+                ##TODO break phonemes into correspdoning sequences using num_phonemes
+                true_string = ''.join([label_map[j] for j in phonemes.data[:num_phonemes.data[0]]])
+                l_dist = L.distance(pred_string, true_string)
+                print("iteration: {}, loss: {}, l_distance: {}".format(idx, loss.data[0], l_dist))
+                print(pred_string)
+                print(true_string)
+
+
+
             loss.backward()
             #torch.nn.utils.clip_grad_norm(model.parameters(), 0.25)
             optimizer.step()
 
-        validation_loss, _ = test_dataset(val_loader, criterion)
-        print("epoch: {}, training_loss: {}, validation_loss: {}".format(e, running_loss/idx, validation_loss))
+        val_loss, _ = test_dataset(val_loader, criterion)
+        print("epoch: {}, training_loss: {}, val_loss: {}".format(e, running_loss/idx, val_loss))
         running_loss = 0.0
+        if val_loss < best_val_loss:
+            try:
+                os.remove(model_file)
+            except BaseException:
+                pass
+            print("saving new best model: %s" % model_file, flush=True)
+            torch.save(model.state_dict(), model_file)
+            best_val_loss = val_loss
 
 #IMPLEMENTATION NOTES:
 #Add +1 to phonemes
