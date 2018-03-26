@@ -3,8 +3,8 @@ from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
-from ctcdecode import CTCBeamDecoder
 from warpctc_pytorch import CTCLoss
+from ctcdecode import CTCBeamDecoder
 import numpy as np
 import argparse
 import pdb
@@ -99,14 +99,14 @@ def test_dataset(dataloader, criterion):
             phonemes = phonemes.cuda(gpu_dev)
             num_phonemes = num_phonemes.cuda(gpu_dev)
 
-        out, seq_lengths = model(data)
+        logits, seq_lengths = model(data)
 
         seq_lengths = Variable(torch.IntTensor(seq_lengths))
         if torch.cuda.is_available():
             seq_lengths = seq_lengths.cuda(gpu_dev)
 
         #Get our loss and calculate the gradients
-        loss = criterion(out, phonemes.cpu(), seq_lengths.cpu(), num_phonemes.cpu())
+        loss = criterion(logits, phonemes.cpu(), seq_lengths.cpu(), num_phonemes.cpu())
         total_loss += loss.data[0]
 
     average_loss = total_loss/idx # average loss
@@ -136,6 +136,11 @@ if __name__=="__main__":
     train_loader = WSJDataLoader(train_data, train_phonemes, batch_size=batch_size)
     val_loader = WSJDataLoader(val_data, val_phonemes, batch_size=batch_size)
 
+    ## Initialize decoder to map model output to predicted string
+    from phoneme_list import PHONEME_MAP
+    label_map = [' '] + PHONEME_MAP
+    decoder = CTCBeamDecoder(labels=label_map, blank_id=0)
+
     ## Initialize network
     model = WSJNet(args.hidden_dim)
     if torch.cuda.is_available():
@@ -160,15 +165,24 @@ if __name__=="__main__":
                 phonemes = phonemes.cuda(gpu_dev)
                 num_phonemes = num_phonemes.cuda(gpu_dev)
 
-            out, seq_lengths = model(data)
-            #pdb.set_trace()
+            logits, seq_lengths = model(data)
+
+            # decode into predicted string
+            pdb.set_trace()
+            logits = torch.transpose(logits, 0, 1)
+            probs = F.softmax(logits, dim=2).data.cpu()
+            output, scores, timesteps, out_seq_len = decoder.decode(probs=probs, seq_lens=seq_lengths)
+            for i in range(output.size(0)):
+                chrs = "".join(label_map[o] for o in output[i, 0, :out_seq_len[i, 0]])
+
+
 
             seq_lengths = Variable(torch.IntTensor(seq_lengths))
             if torch.cuda.is_available():
                 seq_lengths = seq_lengths.cuda(gpu_dev) 
 
             #Get our loss and calculate the gradients
-            loss = criterion(out, phonemes.cpu(), seq_lengths.cpu(), num_phonemes.cpu())
+            loss = criterion(logits, phonemes.cpu(), seq_lengths.cpu(), num_phonemes.cpu())
             running_loss += loss.data[0]
             if idx % 200 == 0:
                 print("iteration: {}, loss: {}".format(idx, loss.data[0]))
