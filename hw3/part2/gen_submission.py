@@ -18,11 +18,12 @@ class WSJDataLoader(DataLoader):
         self.dataset = dataset
         self.phonemes = phonemes
         self.batch_size = batch_size
+        self.shuffle = shuffle
         
     def __iter__(self):
         # Randomize dataset
         num_utterances = self.dataset.shape[0]
-        if shuffle:
+        if self.shuffle:
             rand_perm = np.random.permutation(num_utterances)
         else:
             rand_perm = np.asarray(range(num_utterances))
@@ -123,7 +124,7 @@ if __name__=="__main__":
     decoder = CTCBeamDecoder(labels=label_map, blank_id=0)
 
     ## Initialize network and load pretrained model
-    model_file = "my_model_decay.pt"
+    model_file = "my_model_bs1.pt"
     model = WSJNet(args.hidden_dim)
     if torch.cuda.is_available():
         model.load_state_dict(torch.load(model_file))
@@ -150,6 +151,7 @@ if __name__=="__main__":
             for i in range(output.size(0)):
                 pred_string = "".join(label_map[o] for o in output[i, 0, :out_seq_len[i, 0]])
                 f.write("{},{}\n".format(idx,pred_string))
+                print("{},{}\n".format(idx,pred_string))
 
         f.close()
 

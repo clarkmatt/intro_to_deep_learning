@@ -134,7 +134,7 @@ if __name__=="__main__":
     val_phonemes = np.load(root+"dev_phonemes.npy")+1
 
     ## Initialize DataLoaders
-    batch_size = 16
+    batch_size = 1
     train_loader = WSJDataLoader(train_data, train_phonemes, batch_size=batch_size)
     val_loader = WSJDataLoader(val_data, val_phonemes, batch_size=batch_size)
 
@@ -144,7 +144,7 @@ if __name__=="__main__":
     decoder = CTCBeamDecoder(labels=label_map, blank_id=0)
 
     ## Initialize network
-    model_file = "my_model_decay.pt"
+    model_file = "my_model_bs1.pt"
     model = WSJNet(args.hidden_dim)
     if torch.cuda.is_available():
         model.cuda(gpu_dev)
