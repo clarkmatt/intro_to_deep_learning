@@ -67,18 +67,20 @@ class WSJDataLoader(DataLoader):
 class WSJNet(nn.Module):
     def __init__(self, hidden_dim):
         super(WSJNet, self).__init__()
-        self.rnns = nn.ModuleList([
-            nn.LSTM(input_size=40, hidden_size=hidden_dim),
-            nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim),
-            nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim)])
-        self.projection = nn.Linear(in_features=hidden_dim, out_features=47)
+        #self.rnns = nn.ModuleList([
+        #    nn.LSTM(input_size=40, hidden_size=hidden_dim),
+        #    nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim),
+        #    nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim)])
+        self.lstm = nn.LSTM(input_size=40, hidden_size=hidden_dim, num_layers=3, bidirectional=True)
+        self.projection = nn.Linear(in_features=int(hidden_dim*2), out_features=47)
 
     def forward(self, input_, forward=0, stochastic=False):
         x = input_
-        states = []
-        for rnn in self.rnns:
-            x, state = rnn(x)
-            states.append(state)
+        #states = []
+        #for rnn in self.rnns:
+        #    x, state = rnn(x)
+        #    states.append(state)
+        x, state = self.lstm(x)
 
         output, lengths  = pad_packed_sequence(x)
         x = self.projection(output)
@@ -134,7 +136,7 @@ if __name__=="__main__":
     val_phonemes = np.load(root+"dev_phonemes.npy")+1
 
     ## Initialize DataLoaders
-    batch_size = 64
+    batch_size = 16
     train_loader = WSJDataLoader(train_data, train_phonemes, batch_size=batch_size)
     val_loader = WSJDataLoader(val_data, val_phonemes, batch_size=batch_size)
 
@@ -144,18 +146,18 @@ if __name__=="__main__":
     decoder = CTCBeamDecoder(labels=label_map, blank_id=0)
 
     ## Initialize network
-    model_file = "my_model_bs1.pt"
+    model_file = "bidirectional_bs16.pt"
     model = WSJNet(args.hidden_dim)
     if torch.cuda.is_available():
         model.cuda(gpu_dev)
 
-    #optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    #optimizer = torch.optim.SGD(model.parameters(), lr=30.0, weight_decay=1e-6)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-6)
     criterion = CTCLoss()
 
     best_val_loss = float('inf')
     running_loss = 0.0
-    n_epochs = 30
+    n_epochs = 50
     for e in range(n_epochs):
         for idx, (data, phonemes, num_phonemes) in enumerate(train_loader):
             #print("idx: ", idx, "data_shape: ", data.data.shape, "phonemes_shape: ", phonemes.shape, "num_phonemes: ", num_phonemes)
