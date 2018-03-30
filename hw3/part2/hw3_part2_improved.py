@@ -64,14 +64,17 @@ class WSJDataLoader(DataLoader):
             yield packed_data, torch.IntTensor(np.concatenate(sorted_phoneme_batch)), num_phonemes
 
 
+class LockedDropout():
+    def forward(input_, dropout):
+        mask = torch.Tensor(1, input_.shape[0], input_.shape[1]).fill_(0.5).bernoulli()
+        mask = Variable(mask, requires_grad=False)
+        pdb.set_trace()
+        mask = mask.expand_as(x)
+
 class WSJNet(nn.Module):
     def __init__(self, hidden_dim):
         super(WSJNet, self).__init__()
-        #self.rnns = nn.ModuleList([
-        #    nn.LSTM(input_size=40, hidden_size=hidden_dim),
-        #    nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim),
-        #    nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim)])
-        #self.lstm = nn.LSTM(input_size=40, hidden_size=hidden_dim, num_layers=5, bidirectional=True)
+        self.locked_dropout = LockedDropout()
         self.rnns = nn.ModuleList([
             nn.LSTM(input_size=40, hidden_size=hidden_dim, bidirectional=True),
             nn.LSTM(input_size=2*hidden_dim, hidden_size=hidden_dim, bidirectional=True),
@@ -83,9 +86,13 @@ class WSJNet(nn.Module):
     def forward(self, input_, forward=0, stochastic=False):
         x = input_
         states = []
-        for rnn in self.rnns:
+        for idx, rnn in enumerate(self.rnns):
             x, state = rnn(x)
             states.append(state)
+
+            #locked dropout between rnn layers
+            if idx < len(self.rnns):
+                x = self.locked_dropout(x, 0.5)
         #x, state = self.lstm(x)
 
         output, lengths  = pad_packed_sequence(x)
