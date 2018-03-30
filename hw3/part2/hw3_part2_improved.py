@@ -11,7 +11,7 @@ import numpy as np
 import argparse
 import pdb
 
-gpu_dev =0
+gpu_dev = 0
 
 class WSJDataLoader(DataLoader):
     def __init__(self, dataset, phonemes, batch_size):
@@ -71,16 +71,22 @@ class WSJNet(nn.Module):
         #    nn.LSTM(input_size=40, hidden_size=hidden_dim),
         #    nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim),
         #    nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim)])
-        self.lstm = nn.LSTM(input_size=40, hidden_size=hidden_dim, num_layers=3, bidirectional=True)
+        #self.lstm = nn.LSTM(input_size=40, hidden_size=hidden_dim, num_layers=5, bidirectional=True)
+        self.rnns = nn.ModuleList([
+            nn.LSTM(input_size=40, hidden_size=hidden_dim, bidirectional=True),
+            nn.LSTM(input_size=2*hidden_dim, hidden_size=hidden_dim, bidirectional=True),
+            nn.LSTM(input_size=2*hidden_dim, hidden_size=hidden_dim, bidirectional=True),
+            nn.LSTM(input_size=2*hidden_dim, hidden_size=hidden_dim, bidirectional=True),
+            nn.LSTM(input_size=2*hidden_dim, hidden_size=hidden_dim, bidirectional=True)])
         self.projection = nn.Linear(in_features=int(hidden_dim*2), out_features=47)
 
     def forward(self, input_, forward=0, stochastic=False):
         x = input_
-        #states = []
-        #for rnn in self.rnns:
-        #    x, state = rnn(x)
-        #    states.append(state)
-        x, state = self.lstm(x)
+        states = []
+        for rnn in self.rnns:
+            x, state = rnn(x)
+            states.append(state)
+        #x, state = self.lstm(x)
 
         output, lengths  = pad_packed_sequence(x)
         x = self.projection(output)
@@ -99,15 +105,15 @@ def test_dataset(dataloader, criterion):
         #Put on gpu if available
         phonemes = Variable(torch.IntTensor(phonemes))
         num_phonemes = Variable(torch.IntTensor(num_phonemes))
-        if torch.cuda.is_available():
-            phonemes = phonemes.cuda(gpu_dev)
-            num_phonemes = num_phonemes.cuda(gpu_dev)
+        #if torch.cuda.is_available():
+        #    phonemes = phonemes.cuda(gpu_dev)
+        #    num_phonemes = num_phonemes.cuda(gpu_dev)
 
         logits, seq_lengths = model(data)
 
         seq_lengths = Variable(torch.IntTensor(seq_lengths))
-        if torch.cuda.is_available():
-            seq_lengths = seq_lengths.cuda(gpu_dev)
+        #if torch.cuda.is_available():
+        #    seq_lengths = seq_lengths.cuda(gpu_dev)
 
         #Get our loss and calculate the gradients
         loss = criterion(logits, phonemes.cpu(), seq_lengths.cpu(), num_phonemes.cpu())
@@ -146,18 +152,22 @@ if __name__=="__main__":
     decoder = CTCBeamDecoder(labels=label_map, blank_id=0)
 
     ## Initialize network
-    model_file = "bidirectional_bs16.pt"
+    model_file = "bidirectional_bs16_lr30.pt"
     model = WSJNet(args.hidden_dim)
+    #model.load_state_dict(torch.load("bidirectional_bs16_retrained.pt"))
     if torch.cuda.is_available():
         model.cuda(gpu_dev)
 
     #optimizer = torch.optim.SGD(model.parameters(), lr=30.0, weight_decay=1e-6)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-6)
+
+    learning_rate = 0.001
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-6)
     criterion = CTCLoss()
 
     best_val_loss = float('inf')
     running_loss = 0.0
-    n_epochs = 50
+    n_epochs = 25
+    no_improvement_epochs = 0
     for e in range(n_epochs):
         for idx, (data, phonemes, num_phonemes) in enumerate(train_loader):
             #print("idx: ", idx, "data_shape: ", data.data.shape, "phonemes_shape: ", phonemes.shape, "num_phonemes: ", num_phonemes)
@@ -167,9 +177,9 @@ if __name__=="__main__":
             #Put on gpu if available
             phonemes = Variable(torch.IntTensor(phonemes))
             num_phonemes = Variable(torch.IntTensor(num_phonemes))
-            if torch.cuda.is_available():
-                phonemes = phonemes.cuda(gpu_dev)
-                num_phonemes = num_phonemes.cuda(gpu_dev)
+            #if torch.cuda.is_available():
+            #    phonemes = phonemes.cuda(gpu_dev)
+            #    num_phonemes = num_phonemes.cuda(gpu_dev)
 
             logits, seq_lengths = model(data)
 
@@ -184,22 +194,22 @@ if __name__=="__main__":
             #Get our loss and calculate the gradients
             loss = criterion(logits, phonemes.cpu(), seq_lengths.cpu(), num_phonemes.cpu())
             running_loss += loss.data[0]/batch_size
-            if idx % 200 == 0:
-                # decode into predicted string
-                logits = torch.transpose(logits, 0, 1)
-                probs = F.softmax(logits, dim=2).data.cpu()
-                output, scores, timesteps, out_seq_len = decoder.decode(probs=probs, seq_lens=seq_lengths.data)
-                #for i in range(output.size(0)):
-                #    pred_string = "".join(label_map[o] for o in output[i, 0, :out_seq_len[i, 0]])
-                #    true_string = [label_map[j] for j in phonemes.data]
-                #    L.distance(pred_string, true_string)
-                pred_string = "".join(label_map[o] for o in output[0, 0, :out_seq_len[0, 0]])
-                ##TODO break phonemes into correspdoning sequences using num_phonemes
-                true_string = ''.join([label_map[j] for j in phonemes.data[:num_phonemes.data[0]]])
-                l_dist = L.distance(pred_string, true_string)
-                print("iteration: {}, loss: {}, l_distance: {}".format(idx, loss.data[0]/batch_size, l_dist))
-                print(pred_string)
-                print(true_string)
+            #if idx % 200 == 0:
+            #    # decode into predicted string
+            #    logits = torch.transpose(logits, 0, 1)
+            #    probs = F.softmax(logits, dim=2).data.cpu()
+            #    output, scores, timesteps, out_seq_len = decoder.decode(probs=probs, seq_lens=seq_lengths.data)
+            #    #for i in range(output.size(0)):
+            #    #    pred_string = "".join(label_map[o] for o in output[i, 0, :out_seq_len[i, 0]])
+            #    #    true_string = [label_map[j] for j in phonemes.data]
+            #    #    L.distance(pred_string, true_string)
+            #    pred_string = "".join(label_map[o] for o in output[0, 0, :out_seq_len[0, 0]])
+            #    ##TODO break phonemes into correspdoning sequences using num_phonemes
+            #    true_string = ''.join([label_map[j] for j in phonemes.data[:num_phonemes.data[0]]])
+            #    l_dist = L.distance(pred_string, true_string)
+            #    print("iteration: {}, loss: {}, l_distance: {}".format(idx, loss.data[0]/batch_size, l_dist))
+            #    print(pred_string)
+            #    print(true_string)
 
 
 
@@ -208,7 +218,7 @@ if __name__=="__main__":
             optimizer.step()
 
         val_loss, _ = test_dataset(val_loader, criterion)
-        print("epoch: {}, training_loss: {}, val_loss: {}".format(e, running_loss/idx, val_loss))
+        print("epoch: {}, learning_rate: {}, training_loss: {}, val_loss: {}".format(e, learning_rate, running_loss/idx, val_loss))
         running_loss = 0.0
         if val_loss < best_val_loss:
             try:
@@ -218,6 +228,13 @@ if __name__=="__main__":
             print("saving new best model: %s" % model_file, flush=True)
             torch.save(model.state_dict(), model_file)
             best_val_loss = val_loss
+        else:
+            no_improvement_epochs += 1
+            if no_improvement_epochs > 3:
+                learning_rate /= 10
+                optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-6)
+                no_improvement_epochs = 0
+
 
 #IMPLEMENTATION NOTES:
 #Add +1 to phonemes
