@@ -63,31 +63,49 @@ class WSJDataLoader(DataLoader):
             # do the phonemes need to be a Tensor or Variable?
             yield packed_data, torch.IntTensor(np.concatenate(sorted_phoneme_batch)), num_phonemes
 
+class LockedDropout(nn.Module):
+    def __init__(self):
+        super(LockedDropout, self).__init__()
+
+    def forward(self, input_, dropout):
+        if not self.training:
+            return input_
+        mask = torch.Tensor(1, input_.size(1), input_.size(2)).fill_(1-dropout).bernoulli()
+        mask = Variable(mask/(1-dropout), requires_grad=False)
+        if torch.cuda.is_available():
+            mask = mask.cuda()
+        mask = mask.expand_as(input_)
+        return mask * input_
 
 class WSJNet(nn.Module):
     def __init__(self, hidden_dim):
         super(WSJNet, self).__init__()
-        #self.rnns = nn.ModuleList([
-        #    nn.LSTM(input_size=40, hidden_size=hidden_dim),
-        #    nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim),
-        #    nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim)])
-        self.lstm = nn.LSTM(input_size=40, hidden_size=hidden_dim, num_layers=3, bidirectional=True)
-        self.projection = nn.Linear(in_features=int(hidden_dim*2), out_features=138)
+        self.locked_dropout = LockedDropout()
+        #self.dropout = nn.Dropout(p=0.2)
+        self.rnns = nn.ModuleList([
+            nn.LSTM(input_size=40, hidden_size=hidden_dim, bidirectional=True),
+            nn.LSTM(input_size=2*hidden_dim, hidden_size=hidden_dim, bidirectional=True),
+            nn.LSTM(input_size=2*hidden_dim, hidden_size=hidden_dim, bidirectional=True)])
+        #self.lstm = nn.LSTM(input_size=40, hidden_size=hidden_dim, num_layers=3, bidirectional=True)
+        self.projection = nn.Linear(in_features=int(hidden_dim*2), out_features=139)
 
     def forward(self, input_, forward=0, stochastic=False):
         x = input_
-        #states = []
-        #for rnn in self.rnns:
-        #    x, state = rnn(x)
-        #    states.append(state)
-        x, state = self.lstm(x)
+        states = []
+        for idx, rnn in enumerate(self.rnns):
+            x, state = rnn(x)
+            states.append(state)
+
+
+            #locked dropout between rnn layers
+            if idx < len(self.rnns):
+                x, lengths  = pad_packed_sequence(x)
+                x = self.locked_dropout(x, 0.2)
+                x = pack_padded_sequence(x, lengths)
+        #x, state = self.lstm(x)
 
         output, lengths  = pad_packed_sequence(x)
-        x = self.projection(output)
-        #if stochastic:
-        #    gumbel = Variable(sample_gumbel(shape=x.size(), out=h.data.new()))
-        #    x += gumbel
-        logits = x
+        logits = self.projection(output)
         return logits, lengths 
 
 def test_dataset(dataloader, criterion):
@@ -121,23 +139,23 @@ def test_dataset(dataloader, criterion):
 if __name__=="__main__":
     #Parse input args
     parser = argparse.ArgumentParser(description='Get Network Hyperparameters.')
-    parser.add_argument('--hidden_dim', dest='hidden_dim', type=int, default=256)
+    parser.add_argument('--hidden_dim', dest='hidden_dim', type=int, default=512)
     #parser.add_argument('--learning_rate', dest='learning_rate', type=float, default=30.0)
-    #parser.add_argument('--weight_decay', dest='weight_decay', type=float, default=1e-6)
+    parser.add_argument('--weight_decay', dest='weight_decay', type=float, default=1e-6)
     args = parser.parse_args()
     print(args, flush=True)
 
     ## Load data
     #root = '/Users/matt/.kaggle/competitions/11785-hw3p3/'
     root = ''
-    #train_data = np.load(root+"train.npy")
-    #train_phonemes = np.load(root+"train_subphonemes.npy")+1
+    train_data = np.load(root+"train.npy")
+    train_phonemes = np.load(root+"train_subphonemes.npy")+1
     val_data = np.load(root+"dev.npy")
     val_phonemes = np.load(root+"dev_subphonemes.npy")+1
 
     ## Initialize DataLoaders
     batch_size = 16
-    #train_loader = WSJDataLoader(train_data, train_phonemes, batch_size=batch_size)
+    train_loader = WSJDataLoader(train_data, train_phonemes, batch_size=batch_size)
     val_loader = WSJDataLoader(val_data, val_phonemes, batch_size=batch_size)
 
     ## Initialize decoder to map model output to predicted string
@@ -146,20 +164,22 @@ if __name__=="__main__":
     #decoder = CTCBeamDecoder(labels=label_map, blank_id=0)
 
     ## Initialize network
-    model_file = "bidirectional_bs16.pt"
+    model_file = "part3_bidirectional.pt"
     model = WSJNet(args.hidden_dim)
     if torch.cuda.is_available():
         model.cuda(gpu_dev)
 
     #optimizer = torch.optim.SGD(model.parameters(), lr=30.0, weight_decay=1e-6)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-6)
+    learning_rate = 0.001
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=args.weight_decay)
     criterion = CTCLoss()
 
     best_val_loss = float('inf')
     running_loss = 0.0
     n_epochs = 50
+    no_improvement_epochs = 0
     for e in range(n_epochs):
-        for idx, (data, phonemes, num_phonemes) in enumerate(val_loader):
+        for idx, (data, phonemes, num_phonemes) in enumerate(train_loader):
             #print("idx: ", idx, "data_shape: ", data.data.shape, "phonemes_shape: ", phonemes.shape, "num_phonemes: ", num_phonemes)
             model.train()
             optimizer.zero_grad()
@@ -172,7 +192,6 @@ if __name__=="__main__":
                 num_phonemes = num_phonemes.cuda(gpu_dev)
 
             logits, seq_lengths = model(data)
-            pdb.set_trace()
 
             seq_lengths = Variable(torch.IntTensor(seq_lengths))
 
@@ -181,11 +200,11 @@ if __name__=="__main__":
             running_loss += loss.data[0]/batch_size
 
             loss.backward()
-            #torch.nn.utils.clip_grad_norm(model.parameters(), 0.25)
+            torch.nn.utils.clip_grad_norm(model.parameters(), 0.25)
             optimizer.step()
 
         val_loss, _ = test_dataset(val_loader, criterion)
-        print("epoch: {}, training_loss: {}, val_loss: {}".format(e, running_loss/idx, val_loss))
+        print("epoch: {}, learning_rate: {}, training_loss: {}, val_loss: {}".format(e, learning_rate, running_loss/idx, val_loss))
         running_loss = 0.0
         if val_loss < best_val_loss:
             try:
@@ -195,7 +214,10 @@ if __name__=="__main__":
             print("saving new best model: %s" % model_file, flush=True)
             torch.save(model.state_dict(), model_file)
             best_val_loss = val_loss
-
-#IMPLEMENTATION NOTES:
-#Add +1 to phonemes
-#Make sure output dim is 47
+            no_improvement_epochs = 0
+        else:
+            no_improvement_epochs += 1
+            if no_improvement_epochs > 3:
+                learning_rate /= 10
+                optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=args.weight_decay)
+                no_improvement_epochs = 0
