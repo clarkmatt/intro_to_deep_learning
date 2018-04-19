@@ -183,7 +183,7 @@ class Speller(nn.Module):
         self.lstmcell = nn.LSTMCell(embedding_dim+context_dim, decoder_hidden_dim)
         self.attention = Attention(decoder_input_dim, decoder_hidden_dim, context_dim)
         self.vocab_distribution = nn.Linear(decoder_hidden_dim+context_dim, len(vocab))
-        self.softmax = nn.LogSoftmax(dim=-1)
+        #self.softmax = nn.LogSoftmax(dim=-1)
         return
 
     def forward(self, listener_features, utterance_lengths, transcript=None, teacher_force=1.0):
@@ -220,7 +220,8 @@ class Speller(nn.Module):
             hx, cx = self.lstmcell(rnn_input.squeeze(1), (hx, cx))
             attention, context = self.attention(hx, listener_features, utterance_mask)
             output = torch.cat([hx.unsqueeze(dim=1), context], dim=-1)
-            char_pred = self.softmax(self.vocab_distribution(output))
+            #char_pred = self.softmax(self.vocab_distribution(output))
+            char_pred = self.vocab_distribution(output)
  
             # Save attention and prediction
             attention_list.append(attention)
@@ -281,7 +282,7 @@ def train_las():
     speller = Speller(hidden_dim*2, 256, 256, 128, 128) #decoder_input_dim, decoder_hidden_dim, attention_input_dim, context_dim, embedding_dim
 
     optimizer = torch.optim.Adam([{'params':listener.parameters()}, {'params':speller.parameters()}], lr=0.001, weight_decay=1e-6)
-    criterion = CrossEntropyLoss3D()
+    criterion = CrossEntropyLoss3D(reduce=False)
 
     best_val_loss = float('inf')
     running_loss = 0.0
@@ -302,11 +303,17 @@ def train_las():
             listener_features, utterance_lengths = listener(packed_utterance)
             char_preds, attentions = speller(listener_features, utterance_lengths, transcript_tensor)
             char_preds = torch.cat(char_preds, 1)
-            pdb.set_trace()
 
+            transcript_mask = torch.LongTensor(range(transcript_tensor.size(0))).unsqueeze(1) < torch.LongTensor(transcript_lengths).unsqueeze(0)
+            transcript_mask = transcript_mask.transpose(1,0).contiguous()
+            transcript_mask = transcript_mask.view(-1)
+            #loss = criterion(char_preds[transcript_mask.unsqueeze(-1).expand_as(char_preds)], transcript_tensor.transpose(1,0).contiguous()[transcript_mask])
             loss = criterion(char_preds, transcript_tensor.transpose(1,0).contiguous())
+            #loss = loss.masked_scatter_(Variable(~transcript_mask), Variable(torch.zeros(loss.size())))
+            #loss[~transcript_mask] = 0
+            loss = torch.sum(loss)
+            print(loss/batch_size)
             loss.backward()
-            pdb.set_trace()
 
             
     return
