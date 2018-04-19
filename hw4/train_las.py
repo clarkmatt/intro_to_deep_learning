@@ -214,13 +214,15 @@ class Speller(nn.Module):
         input_char = Variable(torch.zeros(batch_size, 1).long()) # First element in vocab is <sos>
         if torch.cuda.is_available():
             input_char = input_char.cuda()
-        input_char = self.embedding(input_char)
-        rnn_input = torch.cat([input_char, context], dim=-1)
+        embedded_char = self.embedding(input_char)
+        rnn_input = torch.cat([embedded_char, context], dim=-1)
 
         # LSTM loop
         attention_list = []
         char_pred_list = []
+        input_chars = []
         for char_idx in range(transcript.size(0)):
+
             hx, cx = self.lstmcell(rnn_input.squeeze(1), (hx, cx))
             attention, context = self.attention(hx, listener_features, utterance_mask)
             output = torch.cat([hx.unsqueeze(dim=1), context], dim=-1)
@@ -230,19 +232,20 @@ class Speller(nn.Module):
             # Save attention and prediction
             attention_list.append(attention)
             char_pred_list.append(char_pred)
+            input_chars.append(input_char)
 
             # If we are using teacher force then the next char is given from 
             # the transcript, otherwise use our prediction
             if teacher_force:
-                input_char = transcript[char_idx,:] 
+                input_char = transcript[char_idx,:].unsqueeze(dim=1) 
             else:
                 input_char = pred.unsqueeze(1)
 
             # Create input for next LSTMCell
-            input_char = self.embedding(input_char)
-            rnn_input = torch.cat([input_char.unsqueeze(dim=1), context], dim=-1)
+            embedded_char = self.embedding(input_char)
+            rnn_input = torch.cat([embedded_char, context], dim=-1)
             
-        return char_pred_list, attention_list
+        return char_pred_list, attention_list, input_chars
 
     # Override train method to pass train call too attention?
     #def train():
@@ -261,7 +264,7 @@ def train_las():
     ### LOAD DATA ###
     #root = "./"
     root = "/home/matt/.kaggle/competitions/11785-hw4/"
-    train_set = WSJDataset(set_='train', root=root)
+    #train_set = WSJDataset(set_='train', root=root)
     val_set = WSJDataset(set_='val', root=root)
     #test_set = WSJDataset(set_='test', root=root)
 
@@ -310,8 +313,9 @@ def train_las():
             packed_utterance = pack_padded_sequence(utterance_tensor, utterance_lengths)
 
             listener_features, utterance_lengths = listener(packed_utterance)
-            char_preds, attentions = speller(listener_features, utterance_lengths, transcript_tensor)
+            char_preds, attentions, input_chars= speller(listener_features, utterance_lengths, transcript_tensor)
             char_preds = torch.cat(char_preds, 1)
+            input_chars = torch.cat(input_chars, 1)
 
             transcript_mask = torch.LongTensor(range(transcript_tensor.size(0))).unsqueeze(1) < torch.LongTensor(transcript_lengths).unsqueeze(0)
             transcript_mask = transcript_mask.transpose(1,0).contiguous()
@@ -319,16 +323,16 @@ def train_las():
             #loss = criterion(char_preds[transcript_mask.unsqueeze(-1).expand_as(char_preds)], transcript_tensor.transpose(1,0).contiguous()[transcript_mask])
             loss = criterion(char_preds, transcript_tensor.transpose(1,0).contiguous())
             #loss = loss.masked_scatter_(Variable(~transcript_mask), Variable(torch.zeros(loss.size())))
-            #loss[~transcript_mask] = 0
+            loss[~transcript_mask] = 0
             loss = torch.sum(loss)
             epoch_loss += loss.data[0]
             
             if idx%200==0:
                 print("Iteration: {}, loss: {}".format(idx, loss.data[0]/batch_size))
                 val, index = torch.max(char_preds[0,:,:], dim=-1)
-                pdb.set_trace()
-                print("".join(vocab[index.data]))
+                print("".join(vocab[input_chars.data[0,:]]))
                 print("".join(vocab[transcript_tensor.data[:,0]]))
+                print("".join(vocab[index.data]))
             
             loss.backward()
 
