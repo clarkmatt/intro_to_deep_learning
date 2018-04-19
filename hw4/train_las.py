@@ -265,18 +265,18 @@ def train_las():
     val_set = WSJDataset(set_='val', root=root)
     #test_set = WSJDataset(set_='test', root=root)
 
-    #train_size = len(train_set)
+    train_size = len(train_set)
     val_size = len(val_set)
     #test_size = len(test_set)
 
 
     batch_size = 32
     if torch.cuda.is_available():
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory=True)
+        train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate, pin_memory=True, num_workers=8)
         val_loader = torch.utils.data.DataLoader(val_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate, pin_memory=True, num_workers=8)
         #test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False, pin_memory=True)
     else:
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True)
+        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate)
         val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate)
         #test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False)
 
@@ -296,7 +296,7 @@ def train_las():
     epoch_loss = 0.0
     max_epochs = 100
     for epoch in range(max_epochs):
-        for idx, (utterance_tensor, utterance_lengths, transcript_tensor, transcript_lengths) in enumerate(val_loader):
+        for idx, (utterance_tensor, utterance_lengths, transcript_tensor, transcript_lengths) in enumerate(train_loader):
             listener.train()
             speller.train()
 
@@ -326,7 +326,9 @@ def train_las():
             if idx%200==0:
                 print("Iteration: {}, loss: {}".format(idx, loss.data[0]/batch_size))
                 val, index = torch.max(char_preds[0,:,:], dim=-1)
-                print(vocab[index.data])
+                pdb.set_trace()
+                print("".join(vocab[index.data]))
+                print("".join(vocab[transcript_tensor.data[:,0]]))
             
             loss.backward()
 
