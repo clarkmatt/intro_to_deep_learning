@@ -241,7 +241,7 @@ class Speller(nn.Module):
  
             # Save attention and prediction
             attention_list.append(attention)
-            char_logits_list.append(char_logits
+            char_logits_list.append(char_logits)
             input_chars.append(input_char)
 
             # If we are using teacher force then the next char is given from 
