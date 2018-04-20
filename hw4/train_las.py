@@ -399,7 +399,7 @@ def train_las():
             if idx%200==0:
                 print("Iteration: {}, loss: {}".format(idx, loss.data[0]))
                 val, index = torch.max(char_logits[0,:,:], dim=-1)
-                print("".join(vocab[input_chars.data[0,:]]))
+                #print("".join(vocab[input_chars.data[0,:]]))
                 print("".join(vocab[transcript_tensor.data[:,0]]))
                 print("".join(vocab[index.data]))
             
@@ -410,7 +410,7 @@ def train_las():
         print("Epoch: {}, average_loss: {}".format(epoch, avg_epoch_loss))
         if avg_epoch_loss < best_train_false:
             best_train_false = avg_epoch_loss
-            las_model.save("las.pt")
+            torch.save(las_model, "./las.pt")
 
         #reset running_loss
         running_loss = 0.0
