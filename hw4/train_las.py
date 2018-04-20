@@ -272,8 +272,8 @@ class CrossEntropyLoss3D(nn.CrossEntropyLoss):
 
 def train_las():
     ### LOAD DATA ###
-    root = "./"
-    #root = "/home/matt/.kaggle/competitions/11785-hw4/"
+    #root = "./"
+    root = "/home/matt/.kaggle/competitions/11785-hw4/"
     #train_set = WSJDataset(set_='train', root=root)
     val_set = WSJDataset(set_='val', root=root)
     #test_set = WSJDataset(set_='test', root=root)
@@ -330,6 +330,8 @@ def train_las():
             transcript_mask = torch.LongTensor(range(transcript_tensor.size(0))).unsqueeze(1) < torch.LongTensor(transcript_lengths).unsqueeze(0)
             transcript_mask = transcript_mask.transpose(1,0).contiguous()
             transcript_mask = transcript_mask.view(-1)
+            if torch.cuda.is_available():
+                transcript_mask = transcript_mask.cuda()
             #loss = criterion(char_preds[transcript_mask.unsqueeze(-1).expand_as(char_preds)], transcript_tensor.transpose(1,0).contiguous()[transcript_mask])
             loss = criterion(char_preds, transcript_tensor.transpose(1,0).contiguous())
             #loss = loss.masked_scatter_(Variable(~transcript_mask), Variable(torch.zeros(loss.size())))
@@ -345,8 +347,9 @@ def train_las():
                 print("".join(vocab[index.data]))
             
             loss.backward()
+            optimizer.step()
 
-        print("Epoch: {}, average_loss: {}".format(epoch, epoch_loss/(idx*batch_size)))
+        print("Epoch: {}, average_loss: {}".format(epoch, epoch_loss/idx))
         epoch_loss = 0.0
             
     return
