@@ -20,7 +20,7 @@ import argparse
 import pdb
 
 #NOTE: Use vocab drawn from dataset?
-vocab = np.asarray(["<sos>"] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ,.'") + ["<unk>"] + ["<eos>"]) # Possible characters in a sequence
+vocab = np.asarray(["<sos>"] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ,.'+-_") + ["<unk>"] + ["<eos>"]) # Possible characters in a sequence
 gpu_dev = 0 # Which GPU device to run on
 
 
