@@ -241,7 +241,7 @@ class Speller(nn.Module):
  
             # Save attention and prediction
             attention_list.append(attention)
-            char_logits_list.append(char_logits
+            char_logits_list.append(char_logits)
             input_chars.append(input_char)
 
             # If we are using teacher force then the next char is given from 
@@ -250,7 +250,6 @@ class Speller(nn.Module):
                 input_char = transcript[char_idx,:].unsqueeze(dim=1) 
             else:
                 char_logits_value, input_char = torch.max(char_logits, dim=-1)
-            pdb.set_trace()
 
             # Create input for next LSTMCell
             embedded_char = self.embedding(input_char)
@@ -264,6 +263,18 @@ class Speller(nn.Module):
     #def train():
     #   super method
     #   attention.train()
+
+class LAS(nn.Module):
+    def __init__(self, listener_hidden_dim, decoder_hidden_dim, attention_input_dim, context_dim, embedding_dim):
+        super(LAS, self).__init__()
+        self.listener = Listener(hidden_dim=listener_hidden_dim)
+        self.speller = Speller(listener_hidden_dim*2, decoder_hidden_dim, attention_input_dim, context_dim, embedding_dim) #decoder_input_dim, decoder_hidden_dim, attention_input_dim, context_dim, embedding_dim
+
+    def forward(self, packed_utterance, transcript=None, teacher_force=1.0):
+        listener_features, utterance_lengths = self.listener(packed_utterance)
+        char_logits, attentions, input_chars = self.speller(listener_features, utterance_lengths, transcript=transcript, teacher_force=teacher_force)
+        return char_logits, attentions, input_chars
+
 
 def sample_gumbel(shape, eps=1e-10, out=None):
     """
@@ -285,46 +296,51 @@ def test_val():
 
 def train_las():
     ### LOAD DATA ###
-    root = "./"
-    #root = "/home/matt/.kaggle/competitions/11785-hw4/"
-    #train_set = WSJDataset(set_='train', root=root)
+    #root = "./"
+    root = "/home/matt/.kaggle/competitions/11785-hw4/"
+    train_set = WSJDataset(set_='train', root=root)
     val_set = WSJDataset(set_='val', root=root)
     #test_set = WSJDataset(set_='test', root=root)
 
-    #train_size = len(train_set)
+    train_size = len(train_set)
     val_size = len(val_set)
     #test_size = len(test_set)
 
 
     batch_size = 32
     if torch.cuda.is_available():
-        #train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate, pin_memory=True, num_workers=8)
+        train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate, pin_memory=True, num_workers=8)
         val_loader = torch.utils.data.DataLoader(val_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate, pin_memory=True, num_workers=8)
         #test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False, pin_memory=True)
     else:
-        #train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate)
+        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate)
         val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate)
         #test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False)
 
 
-    hidden_dim = 256
+    listener_hidden_dim = 256
+    decoder_hidden_dim = 256
     context_dim = 128
-    listener = Listener(hidden_dim=hidden_dim)
-    speller = Speller(hidden_dim*2, 256, 256, 128, 128) #decoder_input_dim, decoder_hidden_dim, attention_input_dim, context_dim, embedding_dim
+    las_model = LAS(listener_hidden_dim, decoder_hidden_dim, 256, 128, 128)
+    #listener = Listener(hidden_dim=listener_hidden_dim)
+    #speller = Speller(listener_hidden_dim*2, decoder_hidden_dim, 256, 128, 128) #decoder_input_dim, decoder_hidden_dim, attention_input_dim, context_dim, embedding_dim
     if torch.cuda.is_available():
-        listener = listener.cuda()
-        speller = speller.cuda()
+        #listener = listener.cuda()
+        #speller = speller.cuda()
+        las_model.cuda()
 
-    optimizer = torch.optim.Adam([{'params':listener.parameters()}, {'params':speller.parameters()}], lr=1e-3, weight_decay=1e-5)
+    #optimizer = torch.optim.Adam([{'params':listener.parameters()}, {'params':speller.parameters()}], lr=1e-3, weight_decay=1e-5)
+    optimizer = torch.optim.Adam(las_model.parameters(), lr=1e-3, weight_decay=1e-5)
     criterion = CrossEntropyLoss3D(reduce=False)
 
     best_val_loss = float('inf')
     epoch_loss = 0.0
     max_epochs = 100
     for epoch in range(max_epochs):
-        for idx, (utterance_tensor, utterance_lengths, transcript_tensor, transcript_lengths) in enumerate(val_loader):
-            listener.train()
-            speller.train()
+        for idx, (utterance_tensor, utterance_lengths, transcript_tensor, transcript_lengths) in enumerate(train_loader):
+            #listener.train()
+            #speller.train()
+            las_model.train()
 
             optimizer.zero_grad()
 
@@ -335,8 +351,9 @@ def train_las():
                 utterance_tensor = utterance_tensor.cuda()
             packed_utterance = pack_padded_sequence(utterance_tensor, utterance_lengths)
 
-            listener_features, utterance_lengths = listener(packed_utterance)
-            char_logits, attentions, input_chars= speller(listener_features, utterance_lengths, transcript_tensor)
+            char_logits, attentions, input_chars = las_model(packed_utterance, transcript_tensor)
+            #listener_features, utterance_lengths = listener(packed_utterance)
+            #char_logits, attentions, input_chars= speller(listener_features, utterance_lengths, transcript_tensor)
             char_logits = torch.cat(char_logits, 1)
             input_chars = torch.cat(input_chars, 1)
 
