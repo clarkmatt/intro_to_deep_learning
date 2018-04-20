@@ -291,8 +291,34 @@ class CrossEntropyLoss3D(nn.CrossEntropyLoss):
         return super(CrossEntropyLoss3D, self).forward(
             input.view(-1, input.size()[2]), target.view(-1))
 
-def test_val():
-    return
+def test_val(model, criterion, dataloader):
+    model.eval() #only doing inference
+
+    for idx, (utterance_tensor, utterance_lengths, transcript_tensor, transcript_lengths) in enumerate(dataloader):
+
+        transcript_tensor = Variable(transcript_tensor)
+        utterance_tensor = Variable(utterance_tensor)
+        if torch.cuda.is_available():
+            transcript_tensor = transcript_tensor.cuda()
+            utterance_tensor = utterance_tensor.cuda()
+        packed_utterance = pack_padded_sequence(utterance_tensor, utterance_lengths)
+
+        char_logits, attentions, input_chars = las_model(packed_utterance)
+        char_logits = torch.cat(char_logits, 1)
+        input_chars = torch.cat(input_chars, 1)
+
+        transcript_mask = torch.LongTensor(range(transcript_tensor.size(0))).unsqueeze(1) < torch.LongTensor(transcript_lengths).unsqueeze(0)
+        transcript_mask = transcript_mask.transpose(1,0).contiguous()
+        transcript_mask = transcript_mask.view(-1)
+        if torch.cuda.is_available():
+            transcript_mask = transcript_mask.cuda()
+        loss = criterion(char_logits, transcript_tensor.transpose(1,0).contiguous())
+        loss[~transcript_mask] = 0
+        loss = torch.sum(loss) / transcript_mask.sum()
+        epoch_loss += loss.data[0]
+        
+    print("Epoch: {}, average_loss: {}".format(epoch_loss/idx))
+    return epoch_loss/idx
 
 def train_las():
     ### LOAD DATA ###
@@ -334,7 +360,8 @@ def train_las():
     criterion = CrossEntropyLoss3D(reduce=False)
 
     best_val_loss = float('inf')
-    epoch_loss = 0.0
+    best_train_loss = float('inf')
+    running_loss = 0.0
     max_epochs = 100
     for epoch in range(max_epochs):
         for idx, (utterance_tensor, utterance_lengths, transcript_tensor, transcript_lengths) in enumerate(train_loader):
@@ -367,7 +394,7 @@ def train_las():
             #loss = loss.masked_scatter_(Variable(~transcript_mask), Variable(torch.zeros(loss.size())))
             loss[~transcript_mask] = 0
             loss = torch.sum(loss) / transcript_mask.sum()
-            epoch_loss += loss.data[0]
+            running_loss += loss.data[0]
             
             if idx%200==0:
                 print("Iteration: {}, loss: {}".format(idx, loss.data[0]))
@@ -379,8 +406,14 @@ def train_las():
             loss.backward()
             optimizer.step()
 
-        print("Epoch: {}, average_loss: {}".format(epoch, epoch_loss/idx))
-        epoch_loss = 0.0
+        avg_epoch_loss = running_loss/idx
+        print("Epoch: {}, average_loss: {}".format(epoch, avg_epoch_loss))
+        if avg_epoch_loss < best_train_false:
+            best_train_false = avg_epoch_loss
+            las_model.save("las.pt")
+
+        #reset running_loss
+        running_loss = 0.0
             
     return
 
