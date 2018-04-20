@@ -415,8 +415,8 @@ def train_las():
         avg_epoch_loss = running_loss/idx
         val_loss = test_val(las_model, criterion, val_loader)
         print("Epoch: {}, average_training_loss: {}, validation_loss: {}".format(epoch, avg_epoch_loss, val_loss))
-        if avg_epoch_loss < best_train_false:
-            best_train_false = avg_epoch_loss
+        if avg_epoch_loss < best_train_loss:
+            best_train_loss = avg_epoch_loss
             torch.save(las_model, "./las.pt")
 
         #reset running_loss
