@@ -58,7 +58,10 @@ class WSJDataset(Dataset):
         return len(self.labels)
 
     def __getitem__(self, idx):
-        return self.data[idx], self.labels[idx]
+        if self.set_ is in ["train", "val"]:
+            return self.data[idx], self.labels[idx]
+        else:
+            return self.data[idx]
 
 def wsj_collate(batch):
     
@@ -229,6 +232,7 @@ class Speller(nn.Module):
         attention_list = []
         char_logits_list = []
         input_chars = []
+        #max_transcript_length = 500 if transcript is None else transcript.size(0)
         for char_idx in range(transcript.size(0)):
 
             hx0, cx0 = self.lstmcell0(rnn_input.squeeze(1), (hx0, cx0))
@@ -249,13 +253,15 @@ class Speller(nn.Module):
             if teacher_force:
                 input_char = transcript[char_idx,:].unsqueeze(dim=1) 
             else:
-                char_logits_value, input_char = torch.max(char_logits, dim=-1)
+                #Inference
+                gumbel = Variable(sample_gumbel(shape=char_logits.size(), out=char_logits.data.new()))
+                char_logits += gumbel
+
+                max_char_logits, input_char = torch.max(char_logits, dim=-1)
 
             # Create input for next LSTMCell
             embedded_char = self.embedding(input_char)
             rnn_input = torch.cat([embedded_char, context], dim=-1)
-
-            ### Inference
             
         return char_logits_list, attention_list, input_chars
 
@@ -317,7 +323,6 @@ def test_val(model, criterion, dataloader):
         loss = torch.sum(loss) / transcript_mask.sum()
         epoch_loss += loss.data[0]
         
-    print("Epoch: {}, average_loss: {}".format(epoch_loss/idx))
     return epoch_loss/idx
 
 def train_las():
@@ -406,8 +411,10 @@ def train_las():
             loss.backward()
             optimizer.step()
 
+        
         avg_epoch_loss = running_loss/idx
-        print("Epoch: {}, average_loss: {}".format(epoch, avg_epoch_loss))
+        val_loss = test_val(las_model, criterion, val_loader)
+        print("Epoch: {}, average_training_loss: {}, validation_loss: {}".format(epoch, avg_epoch_loss, val_loss))
         if avg_epoch_loss < best_train_false:
             best_train_false = avg_epoch_loss
             torch.save(las_model, "./las.pt")
