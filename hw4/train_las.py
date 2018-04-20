@@ -176,11 +176,17 @@ class Speller(nn.Module):
         super(Speller, self).__init__()
 
         #Learn the initial context state
-        self.initial_hx = nn.Parameter(torch.zeros(1, embedding_dim+context_dim).float(), requires_grad=True)
-        self.initial_cx = nn.Parameter(torch.zeros(1, embedding_dim+context_dim).float(), requires_grad=True)
+        self.initial_hx0 = nn.Parameter(torch.zeros(1, embedding_dim+context_dim).float(), requires_grad=True)
+        self.initial_cx0 = nn.Parameter(torch.zeros(1, embedding_dim+context_dim).float(), requires_grad=True)
+        self.initial_hx1 = nn.Parameter(torch.zeros(1, embedding_dim+context_dim).float(), requires_grad=True)
+        self.initial_cx1 = nn.Parameter(torch.zeros(1, embedding_dim+context_dim).float(), requires_grad=True)
+        self.initial_hx2 = nn.Parameter(torch.zeros(1, embedding_dim+context_dim).float(), requires_grad=True)
+        self.initial_cx2 = nn.Parameter(torch.zeros(1, embedding_dim+context_dim).float(), requires_grad=True)
 
         self.embedding = nn.Embedding(len(vocab), embedding_dim)
-        self.lstmcell = nn.LSTMCell(embedding_dim+context_dim, decoder_hidden_dim)
+        self.lstmcell0 = nn.LSTMCell(embedding_dim+context_dim, decoder_hidden_dim)
+        self.lstmcell1 = nn.LSTMCell(decoder_hidden_dim, decoder_hidden_dim)
+        self.lstmcell2 = nn.LSTMCell(decoder_hidden_dim, decoder_hidden_dim)
         self.attention = Attention(decoder_input_dim, decoder_hidden_dim, context_dim)
         self.vocab_distribution = nn.Linear(decoder_hidden_dim+context_dim, len(vocab))
         #self.softmax = nn.LogSoftmax(dim=-1)
@@ -192,16 +198,18 @@ class Speller(nn.Module):
             teacher_force = 0.0
         teacher_force = np.random.random_sample() < teacher_force
             
-
         # Initializations
         hidden_state = None #LSTM starts with no hidden state
         batch_size = listener_features.size(1)
         max_utterance_length = listener_features.size(0)
-        hx = self.initial_hx.expand(batch_size, -1)
-        cx = self.initial_cx.expand(batch_size, -1)
+        hx0 = self.initial_hx0.expand(batch_size, -1)
+        cx0 = self.initial_cx0.expand(batch_size, -1)
+        hx1 = self.initial_hx1.expand(batch_size, -1)
+        cx1 = self.initial_cx1.expand(batch_size, -1)
+        hx2 = self.initial_hx2.expand(batch_size, -1)
+        cx2 = self.initial_cx2.expand(batch_size, -1)
 
         # Create mask to extract only utterance relevant listener features
-
         utterance_mask = torch.stack([torch.cat([torch.ones(l), torch.zeros(max_utterance_length-l)]) for l in utterance_lengths])
         utterance_mask = Variable(utterance_mask.unsqueeze(1))
         if torch.cuda.is_available():
@@ -209,7 +217,7 @@ class Speller(nn.Module):
         #NOTE: Alternative Masking Method
         #utterance_mask = torch.LongTensor(range(max_utterance_length)).unsqueeze(1) < torch.LongTensor(utterance_lengths).unsqueeze(0)
         #utterance_mask = utterance_mask.transpose(1,0).unsqueeze(1)
-        attention, context = self.attention(hx, listener_features, utterance_mask) 
+        attention, context = self.attention(hx2, listener_features, utterance_mask) 
 
         input_char = Variable(torch.zeros(batch_size, 1).long()) # First element in vocab is <sos>
         if torch.cuda.is_available():
@@ -223,9 +231,11 @@ class Speller(nn.Module):
         input_chars = []
         for char_idx in range(transcript.size(0)):
 
-            hx, cx = self.lstmcell(rnn_input.squeeze(1), (hx, cx))
-            attention, context = self.attention(hx, listener_features, utterance_mask)
-            output = torch.cat([hx.unsqueeze(dim=1), context], dim=-1)
+            hx0, cx0 = self.lstmcell0(rnn_input.squeeze(1), (hx0, cx0))
+            hx1, cx1 = self.lstmcell1(hx0, (hx1, cx1))
+            hx2, cx2 = self.lstmcell2(hx1, (hx2, cx2))
+            attention, context = self.attention(hx2, listener_features, utterance_mask)
+            output = torch.cat([hx2.unsqueeze(dim=1), context], dim=-1)
             #char_pred = self.softmax(self.vocab_distribution(output))
             char_pred = self.vocab_distribution(output)
  
@@ -262,24 +272,24 @@ class CrossEntropyLoss3D(nn.CrossEntropyLoss):
 
 def train_las():
     ### LOAD DATA ###
-    #root = "./"
-    root = "/home/matt/.kaggle/competitions/11785-hw4/"
+    root = "./"
+    #root = "/home/matt/.kaggle/competitions/11785-hw4/"
     #train_set = WSJDataset(set_='train', root=root)
     val_set = WSJDataset(set_='val', root=root)
     #test_set = WSJDataset(set_='test', root=root)
 
-    train_size = len(train_set)
+    #train_size = len(train_set)
     val_size = len(val_set)
     #test_size = len(test_set)
 
 
     batch_size = 32
     if torch.cuda.is_available():
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate, pin_memory=True, num_workers=8)
+        #train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate, pin_memory=True, num_workers=8)
         val_loader = torch.utils.data.DataLoader(val_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate, pin_memory=True, num_workers=8)
         #test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False, pin_memory=True)
     else:
-        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate)
+        #train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate)
         val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=True, collate_fn=wsj_collate)
         #test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False)
 
@@ -292,14 +302,14 @@ def train_las():
         listener = listener.cuda()
         speller = speller.cuda()
 
-    optimizer = torch.optim.Adam([{'params':listener.parameters()}, {'params':speller.parameters()}], lr=0.001, weight_decay=1e-6)
+    optimizer = torch.optim.Adam([{'params':listener.parameters()}, {'params':speller.parameters()}], lr=1e-3, weight_decay=1e-5)
     criterion = CrossEntropyLoss3D(reduce=False)
 
     best_val_loss = float('inf')
     epoch_loss = 0.0
     max_epochs = 100
     for epoch in range(max_epochs):
-        for idx, (utterance_tensor, utterance_lengths, transcript_tensor, transcript_lengths) in enumerate(train_loader):
+        for idx, (utterance_tensor, utterance_lengths, transcript_tensor, transcript_lengths) in enumerate(val_loader):
             listener.train()
             speller.train()
 
@@ -324,11 +334,11 @@ def train_las():
             loss = criterion(char_preds, transcript_tensor.transpose(1,0).contiguous())
             #loss = loss.masked_scatter_(Variable(~transcript_mask), Variable(torch.zeros(loss.size())))
             loss[~transcript_mask] = 0
-            loss = torch.sum(loss)
+            loss = torch.sum(loss) / transcript_mask.sum()
             epoch_loss += loss.data[0]
             
             if idx%200==0:
-                print("Iteration: {}, loss: {}".format(idx, loss.data[0]/batch_size))
+                print("Iteration: {}, loss: {}".format(idx, loss.data[0]))
                 val, index = torch.max(char_preds[0,:,:], dim=-1)
                 print("".join(vocab[input_chars.data[0,:]]))
                 print("".join(vocab[transcript_tensor.data[:,0]]))
