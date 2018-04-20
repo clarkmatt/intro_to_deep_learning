@@ -227,7 +227,7 @@ class Speller(nn.Module):
 
         # LSTM loop
         attention_list = []
-        char_pred_list = []
+        char_logits_list = []
         input_chars = []
         for char_idx in range(transcript.size(0)):
 
@@ -236,12 +236,12 @@ class Speller(nn.Module):
             hx2, cx2 = self.lstmcell2(hx1, (hx2, cx2))
             attention, context = self.attention(hx2, listener_features, utterance_mask)
             output = torch.cat([hx2.unsqueeze(dim=1), context], dim=-1)
-            #char_pred = self.softmax(self.vocab_distribution(output))
-            char_pred = self.vocab_distribution(output)
+            #char_logits = self.softmax(self.vocab_distribution(output))
+            char_logits = self.vocab_distribution(output)
  
             # Save attention and prediction
             attention_list.append(attention)
-            char_pred_list.append(char_pred)
+            char_logits_list.append(char_logits
             input_chars.append(input_char)
 
             # If we are using teacher force then the next char is given from 
@@ -249,31 +249,44 @@ class Speller(nn.Module):
             if teacher_force:
                 input_char = transcript[char_idx,:].unsqueeze(dim=1) 
             else:
-                input_char = pred.unsqueeze(1)
+                char_logits_value, input_char = torch.max(char_logits, dim=-1)
+            pdb.set_trace()
 
             # Create input for next LSTMCell
             embedded_char = self.embedding(input_char)
             rnn_input = torch.cat([embedded_char, context], dim=-1)
+
+            ### Inference
             
-        return char_pred_list, attention_list, input_chars
+        return char_logits_list, attention_list, input_chars
 
     # Override train method to pass train call too attention?
     #def train():
     #   super method
     #   attention.train()
 
-
-
+def sample_gumbel(shape, eps=1e-10, out=None):
+    """
+    Sample from Gumbel(0, 1)
+    based on
+    https://github.com/ericjang/gumbel-softmax/blob/3c8584924603869e90ca74ac20a6a03d99a91ef9/Categorical%20VAE.ipynb ,
+    (MIT license)
+    """
+    U = out.resize_(shape).uniform_() if out is not None else torch.rand(shape)
+    return - torch.log(eps - torch.log(U + eps))
 
 class CrossEntropyLoss3D(nn.CrossEntropyLoss):
     def forward(self, input, target):
         return super(CrossEntropyLoss3D, self).forward(
             input.view(-1, input.size()[2]), target.view(-1))
 
+def test_val():
+    return
+
 def train_las():
     ### LOAD DATA ###
-    #root = "./"
-    root = "/home/matt/.kaggle/competitions/11785-hw4/"
+    root = "./"
+    #root = "/home/matt/.kaggle/competitions/11785-hw4/"
     #train_set = WSJDataset(set_='train', root=root)
     val_set = WSJDataset(set_='val', root=root)
     #test_set = WSJDataset(set_='test', root=root)
@@ -323,8 +336,8 @@ def train_las():
             packed_utterance = pack_padded_sequence(utterance_tensor, utterance_lengths)
 
             listener_features, utterance_lengths = listener(packed_utterance)
-            char_preds, attentions, input_chars= speller(listener_features, utterance_lengths, transcript_tensor)
-            char_preds = torch.cat(char_preds, 1)
+            char_logits, attentions, input_chars= speller(listener_features, utterance_lengths, transcript_tensor)
+            char_logits = torch.cat(char_logits, 1)
             input_chars = torch.cat(input_chars, 1)
 
             transcript_mask = torch.LongTensor(range(transcript_tensor.size(0))).unsqueeze(1) < torch.LongTensor(transcript_lengths).unsqueeze(0)
@@ -332,8 +345,8 @@ def train_las():
             transcript_mask = transcript_mask.view(-1)
             if torch.cuda.is_available():
                 transcript_mask = transcript_mask.cuda()
-            #loss = criterion(char_preds[transcript_mask.unsqueeze(-1).expand_as(char_preds)], transcript_tensor.transpose(1,0).contiguous()[transcript_mask])
-            loss = criterion(char_preds, transcript_tensor.transpose(1,0).contiguous())
+            #loss = criterion(char_logits[transcript_mask.unsqueeze(-1).expand_as(char_logits)], transcript_tensor.transpose(1,0).contiguous()[transcript_mask])
+            loss = criterion(char_logits, transcript_tensor.transpose(1,0).contiguous())
             #loss = loss.masked_scatter_(Variable(~transcript_mask), Variable(torch.zeros(loss.size())))
             loss[~transcript_mask] = 0
             loss = torch.sum(loss) / transcript_mask.sum()
@@ -341,7 +354,7 @@ def train_las():
             
             if idx%200==0:
                 print("Iteration: {}, loss: {}".format(idx, loss.data[0]))
-                val, index = torch.max(char_preds[0,:,:], dim=-1)
+                val, index = torch.max(char_logits[0,:,:], dim=-1)
                 print("".join(vocab[input_chars.data[0,:]]))
                 print("".join(vocab[transcript_tensor.data[:,0]]))
                 print("".join(vocab[index.data]))
