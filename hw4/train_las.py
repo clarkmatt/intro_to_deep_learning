@@ -218,13 +218,13 @@ class Speller(nn.Module):
         cx2 = self.initial_cx2.expand(batch_size, -1)
 
         # Create mask to extract only utterance relevant listener features
-        utterance_mask = torch.stack([torch.cat([torch.ones(l), torch.zeros(max_utterance_length-l)]) for l in utterance_lengths])
-        utterance_mask = Variable(utterance_mask.unsqueeze(1))
+        #utterance_mask = torch.stack([torch.cat([torch.ones(l), torch.zeros(max_utterance_length-l)]) for l in utterance_lengths])
+        #utterance_mask = Variable(utterance_mask.unsqueeze(1))
+        #NOTE: Alternative Masking Method
+        utterance_mask = torch.LongTensor(range(max_utterance_length)).unsqueeze(1) < torch.LongTensor(utterance_lengths).unsqueeze(0)
+        utterance_mask = Variable(utterance_mask.transpose(1,0).unsqueeze(1).float())
         if torch.cuda.is_available():
             utterance_mask = utterance_mask.cuda()
-        #NOTE: Alternative Masking Method
-        #utterance_mask = torch.LongTensor(range(max_utterance_length)).unsqueeze(1) < torch.LongTensor(utterance_lengths).unsqueeze(0)
-        #utterance_mask = utterance_mask.transpose(1,0).unsqueeze(1)
         attention, context = self.attention(hx2, listener_features, utterance_mask) 
 
         input_char = Variable(torch.zeros(batch_size, 1).long()) # First element in vocab is <sos>
