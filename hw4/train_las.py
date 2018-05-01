@@ -192,8 +192,8 @@ class Speller(nn.Module):
         self.lstmcell1 = nn.LSTMCell(decoder_hidden_dim, decoder_hidden_dim)
         self.lstmcell2 = nn.LSTMCell(decoder_hidden_dim, decoder_hidden_dim)
         self.attention = Attention(decoder_input_dim, decoder_hidden_dim, context_dim)
-        self.hidden = nn.Linear(decoder_hidden_dim+context_dim, 256)
-        self.vocab_distribution = nn.Linear(256, len(vocab))
+        self.hidden = nn.Linear(decoder_hidden_dim+context_dim, 128)
+        self.vocab_distribution = nn.Linear(128, len(vocab))
         #self.vocab_distribution = nn.Linear(decoder_hidden_dim+context_dim, len(vocab))
         #self.softmax = nn.LogSoftmax(dim=-1)
         return
@@ -202,7 +202,6 @@ class Speller(nn.Module):
         #Set up Teacher Force
         if transcript is None:
             teacher_force = 0.0
-        teacher_force = np.random.random_sample() < teacher_force
             
         # Initializations
         hidden_state = None #LSTM starts with no hidden state
@@ -218,11 +217,11 @@ class Speller(nn.Module):
         cx2 = self.initial_cx2.expand(batch_size, -1)
 
         # Create mask to extract only utterance relevant listener features
-        #utterance_mask = torch.stack([torch.cat([torch.ones(l), torch.zeros(max_utterance_length-l)]) for l in utterance_lengths])
-        #utterance_mask = Variable(utterance_mask.unsqueeze(1))
+        utterance_mask = torch.stack([torch.cat([torch.ones(l), torch.zeros(max_utterance_length-l)]) for l in utterance_lengths])
+        utterance_mask = Variable(utterance_mask.unsqueeze(1))
         #NOTE: Alternative Masking Method
-        utterance_mask = torch.LongTensor(range(max_utterance_length)).unsqueeze(1) < torch.LongTensor(utterance_lengths).unsqueeze(0)
-        utterance_mask = Variable(utterance_mask.transpose(1,0).unsqueeze(1).float())
+        #utterance_mask = torch.LongTensor(range(max_utterance_length)).unsqueeze(1) < torch.LongTensor(utterance_lengths).unsqueeze(0)
+        #utterance_mask = Variable(utterance_mask.transpose(1,0).unsqueeze(1).float())
         if torch.cuda.is_available():
             utterance_mask = utterance_mask.cuda()
         attention, context = self.attention(hx2, listener_features, utterance_mask) 
@@ -246,7 +245,7 @@ class Speller(nn.Module):
             attention, context = self.attention(hx2, listener_features, utterance_mask)
             output = torch.cat([hx2.unsqueeze(dim=1), context], dim=-1)
             #char_logits = self.softmax(self.vocab_distribution(output))
-            output = self.hidden(F.relu(output))
+            output = self.hidden(F.leaky_relu(output))
             char_logits = self.vocab_distribution(output)
  
             # Save attention and prediction
@@ -256,7 +255,7 @@ class Speller(nn.Module):
 
             # If we are using teacher force then the next char is given from 
             # the transcript, otherwise use our prediction
-            if teacher_force:
+            if np.random.random_sample() < teacher_force:
                 input_char = transcript[char_idx,:].unsqueeze(dim=1) 
             else:
                 gumbel = Variable(sample_gumbel(shape=char_logits.size(), out=char_logits.data.new()))
